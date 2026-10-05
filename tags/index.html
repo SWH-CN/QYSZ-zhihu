@@ -27,7 +27,7 @@ const baseUrl = "/QYSZ-zhihu";
             <time>${p.date}</time>
             <span class="post-type">${p.type}</span>
             <span class="post-cat">${p.L1} > ${p.L2}</span>
-            ${p.url ? `<a href="${p.url}" target="_blank" rel="noopener" class="post-source">原文</a>` : ''}
+            ${p.url ? `` : ''}
           </div>
           ${p.summary ? `<p class="post-summary">${escapeHtml(p.summary)}</p>` : ''}
         </article>
