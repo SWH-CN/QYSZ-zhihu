@@ -6,15 +6,45 @@
   const results = document.getElementById('search-results');
   const count = document.getElementById('result-count');
   const desc = document.querySelector('.page-desc');
+  const CHUNKS = 24, CHUNK_SIZE = 100;
   let posts = [];
+  let bodies = [], bodiesLoaded = 0, metaReady = false, bodiesDone = false, bodyFail = false;
+  const initialQ = new URLSearchParams(location.search).get('q');
+  if (initialQ) input.value = initialQ;
 
-  fetch('./index.json').then(r => r.json()).then(data => {
-    posts = data;
-    if (desc) desc.textContent = `全文检索（标题 + 摘要 + 正文），共 ${posts.length} 篇`;
-  }).catch(e => {
-    if (desc) desc.textContent = '索引加载失败，请刷新重试';
-    console.error(e);
-  });
+  function updateDesc(){
+    if(!desc) return;
+    if(!metaReady){ desc.textContent='正在加载索引…'; return; }
+    if(bodyFail){ desc.textContent=`标题+摘要可搜（共 ${posts.length} 篇），部分正文未能加载（刷新可重试）`; return; }
+    if(!bodiesDone){ desc.textContent=`正文索引加载中 ${bodiesLoaded}/${posts.length}…（标题+摘要已可搜）`; return; }
+    desc.textContent=`全文检索（标题 + 摘要 + 正文），共 ${posts.length} 篇`;
+  }
+  function loadMeta(attempt){
+    fetch('./meta.json').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(data=>{
+      posts=data; bodies=new Array(posts.length).fill(''); metaReady=true; updateDesc();
+      search(input.value.trim());
+      loadBodies(0,0);
+    }).catch(e=>{
+      console.error(e);
+      if(attempt<3) setTimeout(()=>loadMeta(attempt+1),2000);
+      else if(desc) desc.textContent='索引加载失败，请刷新重试';
+    });
+  }
+  function loadBodies(c,attempt){
+    if(c>=CHUNKS){ bodiesDone=true; updateDesc(); const q=input.value.trim(); if(q.length>=2)search(q); return; }
+    fetch('./bodies-'+c+'.json').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(arr=>{
+      for(let i=0;i<arr.length;i++) bodies[c*CHUNK_SIZE+i]=arr[i];
+      bodiesLoaded=Math.min(posts.length,(c+1)*CHUNK_SIZE);
+      updateDesc();
+      const q=input.value.trim(); if(q.length>=2)search(q);
+      loadBodies(c+1,0);
+    }).catch(e=>{
+      console.error(e);
+      if(attempt<3) setTimeout(()=>loadBodies(c,attempt+1),2000);
+      else { bodyFail=true; bodiesDone=true; updateDesc(); }
+    });
+  }
+  loadMeta(0);
 
   const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
@@ -36,25 +66,29 @@
     return seg;
   }
   function search(query){
+    if(!metaReady){results.innerHTML='';if(count)count.textContent='索引加载中…';return;}
     if(!query||query.length<2){results.innerHTML='';if(count)count.textContent='';return;}
     const q=query.toLowerCase();
     const re=new RegExp(esc(q),'g');
     const scored=[];
-    for(const p of posts){
+    for(let i=0;i<posts.length;i++){
+      const p=posts[i];
       const title=(p.title||'').toLowerCase();
       const summary=(p.summary||'').toLowerCase();
-      const body=(p.body||'').toLowerCase();
+      const body=i<bodiesLoaded?(bodies[i]||'').toLowerCase():'';
       let score=0;
       if(title.includes(q)) score+=10;
       score += (summary.match(re)||[]).length*2;
       score += (body.match(re)||[]).length;
-      if(score>0) scored.push({p,score});
+      if(score>0) scored.push({p,i,score});
     }
     scored.sort((a,b)=>b.score-a.score);
-    if(count) count.textContent = scored.length ? `找到 ${scored.length} 篇` : '未找到匹配结果';
-    results.innerHTML = scored.slice(0,100).map(({p})=>{
-      const showBody = p.body && p.body.toLowerCase().includes(q);
-      const excerpt = showBody ? snippet(p.body, query) : (p.summary||'');
+    const loading=!bodiesDone;
+    if(count) count.textContent = scored.length ? `找到 ${scored.length} 篇${loading?'（正文仍在加载，结果会更全）':''}` : (loading?'未找到匹配结果（正文仍在加载…）':'未找到匹配结果');
+    results.innerHTML = scored.slice(0,100).map(({p,i})=>{
+      const body=i<bodiesLoaded?(bodies[i]||''):'';
+      const showBody = body && body.toLowerCase().includes(q);
+      const excerpt = showBody ? snippet(body, query) : (p.summary||'');
       return `
         <article class="post-card">
           <h3 class="post-title"><a href="${p.url||baseUrl+'/posts/'+p.year+'/'+p.slug+'/'}">${highlight(p.title,query)}</a></h3>
@@ -66,7 +100,4 @@
   }
   let timer;
   input.addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(()=>search(input.value.trim()),200);});
-  const params=new URLSearchParams(location.search);
-  const q=params.get('q');
-  if(q){input.value=q;search(q);}
 })();</script></main><footer class="site-footer" data-astro-cid-hkbrpulz><p data-astro-cid-hkbrpulz>清一山长文集 · 静态归档</p></footer></body></html>
